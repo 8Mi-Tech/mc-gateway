@@ -8,6 +8,7 @@ import (
 	"os"
 	"sync"
 	"time"
+	"strings"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/rs/zerolog/log"
@@ -211,5 +212,11 @@ func GetMcHost(buf []byte) string {
 		return ""
 	}
 
-	return string(buf[1 : host_len+1])
+	host := string(buf[1 : host_len+1])
+	
+	if spliterIndex := strings.IndexRune(host, 0); spliterIndex != -1 {
+		return host[0:spliterIndex]
+	} else {
+		return host
+	}    
 }
