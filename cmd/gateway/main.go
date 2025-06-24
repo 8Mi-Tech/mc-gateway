@@ -6,9 +6,11 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -129,12 +131,19 @@ func watchConfig() *fsnotify.Watcher {
 }
 
 func main() {
+	if err := writePIDFile(); err != nil {
+		panic(fmt.Sprintf("Failed to write PID file: %v", err))
+	}
+	defer removePIDFile()
+
 	if err := loadConfig(); err != nil {
 		panic(err)
 	}
 
 	watcher := watchConfig()
 	defer watcher.Close()
+
+	go handleLogRotate()
 
 	// 监听TCP端口
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", config.Port))
@@ -179,6 +188,8 @@ func handleRequest(conn net.Conn) {
 	// 确保连接关闭
 	defer conn.Close()
 
+	setSocketOptions(conn)
+
 	buf := make([]byte, 1024)
 	n, err := conn.Read(buf)
 	if err != nil {
@@ -212,59 +223,39 @@ func handleRequest(conn net.Conn) {
 	defer client.Close()
 
 	client.Write(buf[:n])
+	// 不需要 buf 了，释放掉
+	buf = nil
 
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(1)
 
 	go handleRead(client, conn, &wg)
-	go handleWrite(client, conn, &wg)
+	handleWrite(client, conn, nil)
 
+	// 等待所有读写操作完成
+	// 不放在 defer 中，以防报错时无法关闭连接
 	wg.Wait()
 }
 
 func handleRead(srv, cli net.Conn, wg *sync.WaitGroup) {
-	defer func() {
-		wg.Done()
-		srv.Close()
-		cli.Close()
-	}()
+	if wg != nil {
+		defer wg.Done()
+	}
 
-	buf := make([]byte, 1024)
-
-	for {
-		n, err := srv.Read(buf)
-		if err != nil {
-			log.Err(err).Msg("Error reading from server")
-			return
-		}
-
-		if _, err := cli.Write(buf[:n]); err != nil {
-			log.Err(err).Msg("Error writing to client")
-			return
-		}
+	_, err := io.Copy(srv, cli)
+	if err != nil && err != io.EOF {
+		log.Err(err).Msg("Error copying data")
 	}
 }
 
 func handleWrite(srv, cli net.Conn, wg *sync.WaitGroup) {
-	defer func() {
-		wg.Done()
-		srv.Close()
-		cli.Close()
-	}()
+	if wg != nil {
+		defer wg.Done()
+	}
 
-	buf := make([]byte, 1024)
-
-	for {
-		n, err := cli.Read(buf)
-		if err != nil {
-			log.Err(err).Msg("Error reading from client")
-			return
-		}
-
-		if _, err := srv.Write(buf[:n]); err != nil {
-			log.Err(err).Msg("Error writing to server")
-			return
-		}
+	_, err := io.Copy(cli, srv)
+	if err != nil && err != io.EOF {
+		log.Err(err).Msg("Error copying data")
 	}
 }
 
@@ -286,4 +277,44 @@ func getMcHost(buf []byte) string {
 	} else {
 		return host
 	}
+}
+
+func setSocketOptions(conn net.Conn) {
+	if tcpConn, ok := conn.(*net.TCPConn); ok {
+		tcpConn.SetNoDelay(true) // 禁用 Nagle 算法
+		tcpConn.SetKeepAlive(true)
+		tcpConn.SetKeepAlivePeriod(30 * time.Second)
+	}
+}
+
+func handleLogRotate() {
+	signalChan := make(chan os.Signal, 1)
+	signal.Notify(signalChan, syscall.SIGHUP)
+
+	for range signalChan {
+		log.Info().Msg("Received SIGHUP, reopening log file")
+		if err := reopenLogFile(); err != nil {
+			log.Error().Err(err).Msg("Failed to reopen log file")
+		}
+	}
+}
+
+func reopenLogFile() error {
+	configLoadLock.Lock()
+	defer configLoadLock.Unlock()
+
+	if config.Log.File == "" {
+		return nil
+	}
+
+	// 重新打开日志文件
+	logFile, err := os.OpenFile(config.Log.File, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return err
+	}
+
+	log.Logger = log.Logger.Output(io.MultiWriter(os.Stdout, logFile))
+	currentLogFile = config.Log.File
+
+	return nil
 }
