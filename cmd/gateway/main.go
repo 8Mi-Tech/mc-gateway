@@ -21,6 +21,8 @@ import (
 type (
 	Config struct {
 		Port    int               `json:"port"`
+		Tcp     bool              `json:"tcp"`
+		Quic    bool              `json:"quic"`
 		Hosts   map[string]string `json:"hosts"`
 		Default string            `json:"default"`
 		Log     LogConfig         `json:"log"`
@@ -33,6 +35,8 @@ type (
 )
 
 var (
+	configFile = "config.json"
+
 	config         Config
 	currentLogFile string
 	configLoadLock sync.Mutex
@@ -42,7 +46,7 @@ func loadConfig() error {
 	configLoadLock.Lock()
 	defer configLoadLock.Unlock()
 
-	file, err := os.Open("config.json")
+	file, err := os.Open(configFile)
 	if err != nil {
 		return err
 	}
@@ -103,10 +107,13 @@ func watchConfig() *fsnotify.Watcher {
 	go func() {
 		for {
 			select {
-			case _, ok := <-watcher.Events:
+			case event, ok := <-watcher.Events:
 				if !ok {
 					log.Error().Msg("watcher.Events channel closed")
 					return
+				}
+				if !strings.HasSuffix(event.Name, configFile) {
+					continue
 				}
 			case err, ok := <-watcher.Errors:
 				if !ok {
@@ -145,15 +152,37 @@ func main() {
 
 	go handleLogRotate()
 
+	var wg sync.WaitGroup
+	defer wg.Wait()
+
+	// 启动QUIC服务
+	if config.Quic {
+		wg.Add(1)
+		go runQuic(&wg)
+	}
+
 	// 监听TCP端口
+	if config.Tcp {
+		wg.Add(1)
+		go runTcp(&wg)
+	}
+}
+
+func runTcp(wg *sync.WaitGroup) {
+	if wg != nil {
+		defer wg.Done()
+	}
+
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", config.Port))
 	if err != nil {
-		panic(err)
+		log.Fatal().Err(err).
+			Int("port", config.Port).
+			Msg("Failed to listen on port")
 	}
 	defer listener.Close()
 	log.Info().
 		Int("port", config.Port).
-		Msg("Listening")
+		Msg("Listening for TCP connections")
 
 	for {
 		// 接受传入的连接
@@ -208,6 +237,13 @@ func handleRequest(conn net.Conn) {
 	host, ok := config.Hosts[mc_host]
 	if !ok {
 		host = config.Default
+	}
+	if host == "" {
+		log.Err(errEmptyBuffer).
+			Str("client", conn.RemoteAddr().String()).
+			Str("host", mc_host).
+			Msg("failed to route host")
+		return
 	}
 
 	log.Info().
