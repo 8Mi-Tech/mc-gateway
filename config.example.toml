@@ -1,0 +1,19 @@
+[log]
+level = "warn"
+file = "logs/mc1.log"
+
+[tcp]
+enable = true
+port = 25565
+
+[quic]
+enable = true
+port = 25565
+
+[kcp]
+enable = true
+port = 25566
+
+[hosts]
+dev = "mc1:25565"
+"dev.lan" = "mc1:25568"

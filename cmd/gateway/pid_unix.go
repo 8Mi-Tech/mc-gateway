@@ -1,3 +1,6 @@
+// pid_unix.go
+//go:build unix || plan9
+
 package main
 
 import (

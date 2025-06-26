@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -9,12 +8,12 @@ import (
 	"io"
 	"net"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/quic-go/quic-go"
 	"github.com/rs/zerolog/log"
+	"github.com/tursom/mc-gateway/protocol"
 )
 
 var (
@@ -60,8 +59,11 @@ func main() {
 func handlerConn(conn net.Conn) {
 	defer conn.Close()
 
+	setSocketOptions(conn)
+
 	tlsConf := &tls.Config{
 		InsecureSkipVerify: true, // 跳过证书检查
+		NextProtos:         []string{"minecraft", "quic", "raw", "h3"},
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second) // 3s handshake timeout
@@ -100,8 +102,8 @@ func handlerConn(conn net.Conn) {
 	}
 	buf = buf[:n]
 
-	new_buf := replaceMcHost(buf, mcHost)
-	_, err = stream.Write(new_buf) // 写入数据到 QUIC 流
+	buf = protocol.ReplaceMcHost(buf, mcHost)
+	_, err = stream.Write(buf) // 写入数据到 QUIC 流
 	if err != nil {
 		log.Err(err).
 			Str("client", conn.RemoteAddr().String()).
@@ -110,6 +112,8 @@ func handlerConn(conn net.Conn) {
 			Msg("Error writing to QUIC stream")
 		return
 	}
+	// 释放 buf
+	buf = nil
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -129,33 +133,10 @@ func copyData(src io.Reader, dst io.Writer, wg *sync.WaitGroup) {
 	}
 }
 
-func replaceMcHost(buf []byte, host string) []byte {
-	if len(buf) < 5 {
-		return nil
+func setSocketOptions(conn net.Conn) {
+	if tcpConn, ok := conn.(*net.TCPConn); ok {
+		tcpConn.SetNoDelay(true) // 禁用 Nagle 算法
+		tcpConn.SetKeepAlive(true)
+		tcpConn.SetKeepAlivePeriod(30 * time.Second)
 	}
-
-	var out bytes.Buffer
-	head := buf[:4]
-
-	buf = buf[4:]
-	host_len := buf[0]
-	if len(buf) < int(host_len)+1 {
-		return nil
-	}
-
-	raw_host := string(buf[1 : host_len+1])
-	if spliterIndex := strings.IndexRune(raw_host, 0); spliterIndex != -1 {
-		host = host + raw_host[spliterIndex:]
-	}
-
-	// 修改标识数据包长度的字节
-	head[0] += byte(len(host) - len(raw_host))
-
-	out.Write(head)                // 保留前四个字节
-	out.WriteByte(byte(len(host))) // 写入主机名长度
-	out.Write([]byte(host))        // 写入主机名
-
-	out.Write(buf[host_len+1:]) // 写入剩余数据
-
-	return out.Bytes()
 }

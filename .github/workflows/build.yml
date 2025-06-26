@@ -1,0 +1,214 @@
+# This workflow will build a golang project
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
+
+name: Go
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+jobs:
+
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux builds
+          - goos: linux
+            goarch: amd64
+            name: linux-amd64
+          - goos: linux
+            goarch: arm64
+            name: linux-arm64
+          - goos: linux
+            goarch: arm
+            goarm: 7
+            name: linux-armv7
+          - goos: linux
+            goarch: arm
+            goarm: 6
+            name: linux-armv6
+          - goos: linux
+            goarch: 386
+            name: linux-386
+          - goos: linux
+            goarch: loong64
+            name: linux-loong64
+          - goos: linux
+            goarch: mips
+            name: linux-mips
+          - goos: linux
+            goarch: mips64
+            name: linux-mips64
+          - goos: linux
+            goarch: mips64le
+            name: linux-mips64le
+          - goos: linux
+            goarch: mipsle
+            name: linux-mipsle
+          - goos: linux
+            goarch: ppc64
+            name: linux-ppc64
+          - goos: linux
+            goarch: ppc64le
+            name: linux-ppc64le
+          - goos: linux
+            goarch: riscv64
+            name: linux-riscv64
+          - goos: linux
+            goarch: s390x
+            name: linux-s390x
+
+          # Windows builds
+          - goos: windows
+            goarch: amd64
+            name: windows-amd64
+            ext: .exe
+          - goos: windows
+            goarch: arm64
+            name: windows-arm64
+            ext: .exe
+          - goos: windows
+            goarch: 386
+            name: windows-386
+            ext: .exe
+
+          # macOS builds
+          - goos: darwin
+            goarch: amd64
+            name: darwin-amd64
+          - goos: darwin
+            goarch: arm64
+            name: darwin-arm64
+
+          # FreeBSD builds
+          - goos: freebsd
+            goarch: amd64
+            name: freebsd-amd64
+          - goos: freebsd
+            goarch: arm64
+            name: freebsd-arm64
+          - goos: freebsd
+            goarch: 386
+            name: freebsd-386
+          - goos: freebsd
+            goarch: arm
+            name: freebsd-arm
+          - goos: freebsd
+            goarch: riscv64
+            name: freebsd-riscv64
+
+          - goos: aix
+            goarch: ppc64
+            name: aix-ppc64
+          - goos: dragonfly
+            goarch: amd64
+            name: dragonfly-amd64
+          - goos: illumos
+            goarch: amd64
+            name: illumos-amd64
+          - goos: netbsd
+            goarch: 386
+            name: netbsd-386
+          - goos: netbsd
+            goarch: amd64
+            name: netbsd-amd64
+          - goos: netbsd
+            goarch: arm
+            name: netbsd-arm
+          - goos: netbsd
+            goarch: arm64
+            name: netbsd-arm64
+          - goos: openbsd
+            goarch: 386
+            name: openbsd-386
+          - goos: openbsd
+            goarch: amd64
+            name: openbsd-amd64
+          - goos: openbsd
+            goarch: arm
+            name: openbsd-arm
+          - goos: openbsd
+            goarch: arm64
+            name: openbsd-arm64
+          - goos: openbsd
+            goarch: ppc64
+            name: openbsd-ppc64
+          - goos: openbsd
+            goarch: riscv64
+            name: openbsd-riscv64
+          - goos: plan9
+            goarch: 386
+            name: plan9-386
+          - goos: plan9
+            goarch: amd64
+            name: plan9-amd64
+          - goos: plan9
+            goarch: arm
+            name: plan9-arm
+          - goos: solaris
+            goarch: amd64
+            name: solaris-amd64
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.23.1'
+
+    - name: Build Gateway
+      run: go build -ldflags="-s -w" -o gateway-${{ matrix.name }}${{ matrix.ext }} ./cmd/gateway
+      env:
+        GOOS: ${{ matrix.goos }}
+        GOARCH: ${{ matrix.goarch }}
+        GOARM: ${{ matrix.goarm }}
+
+    - name: Build KCP
+      run: go build -ldflags="-s -w" -o kcp-${{ matrix.name }}${{ matrix.ext }} ./cmd/kcp
+      env:
+        GOOS: ${{ matrix.goos }}
+        GOARCH: ${{ matrix.goarch }}
+        GOARM: ${{ matrix.goarm }}
+
+    - name: Build QUIC
+      run: go build -ldflags="-s -w" -o quic-${{ matrix.name }}${{ matrix.ext }} ./cmd/quic
+      env:
+        GOOS: ${{ matrix.goos }}
+        GOARCH: ${{ matrix.goarch }}
+        GOARM: ${{ matrix.goarm }}
+
+    - name: Upload artifacts artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: binaries-${{ matrix.name }}
+        path: |
+          gateway-${{ matrix.name }}${{ matrix.ext }}
+          kcp-${{ matrix.name }}${{ matrix.ext }}
+          quic-${{ matrix.name }}${{ matrix.ext }}
+
+  # 合并所有构建产物
+  merge-artifacts:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: ./artifacts
+        merge-multiple: true  # 合并所有 artifacts
+
+    - name: Display structure
+      run: ls -la ./artifacts
+
+    - name: Upload merged artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: mc-gateway-all-platforms
+        path: ./artifacts/*
+        retention-days: 30

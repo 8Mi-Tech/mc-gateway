@@ -1,141 +1,15 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
-	"os"
-	"os/signal"
-	"path/filepath"
-	"strings"
 	"sync"
-	"syscall"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
-	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"github.com/tursom/mc-gateway/protocol"
 )
-
-type (
-	Config struct {
-		Port    int               `json:"port"`
-		Tcp     bool              `json:"tcp"`
-		Quic    bool              `json:"quic"`
-		Hosts   map[string]string `json:"hosts"`
-		Default string            `json:"default"`
-		Log     LogConfig         `json:"log"`
-	}
-
-	LogConfig struct {
-		Level string `json:"level"`
-		File  string `json:"file"`
-	}
-)
-
-var (
-	configFile = "config.json"
-
-	config         Config
-	currentLogFile string
-	configLoadLock sync.Mutex
-)
-
-func loadConfig() error {
-	configLoadLock.Lock()
-	defer configLoadLock.Unlock()
-
-	file, err := os.Open(configFile)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	byteValue, err := io.ReadAll(file)
-	if err != nil {
-		return err
-	}
-
-	if err := json.Unmarshal(byteValue, &config); err != nil {
-		return err
-	}
-
-	return loadLogger()
-}
-
-func loadLogger() error {
-	level, err := zerolog.ParseLevel(config.Log.Level)
-	if err != nil {
-		return err
-	}
-
-	log.Logger = log.Logger.Level(level)
-
-	if config.Log.File != "" && currentLogFile != config.Log.File {
-		if err := os.MkdirAll(filepath.Dir(config.Log.File), 0755); err != nil {
-			return err
-		}
-
-		logFile, err := os.OpenFile(config.Log.File, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err != nil {
-			return err
-		}
-
-		log.Logger = log.Logger.Output(io.MultiWriter(os.Stdout, logFile))
-
-		currentLogFile = config.Log.File
-	}
-
-	return nil
-}
-
-func watchConfig() *fsnotify.Watcher {
-	go func() {
-		for {
-			time.Sleep(time.Minute)
-			if err := loadConfig(); err != nil {
-				log.Error().Err(err).Msg("Failed to reload config")
-			}
-		}
-	}()
-
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to create config watcher")
-	}
-	go func() {
-		for {
-			select {
-			case event, ok := <-watcher.Events:
-				if !ok {
-					log.Error().Msg("watcher.Events channel closed")
-					return
-				}
-				if !strings.HasSuffix(event.Name, configFile) {
-					continue
-				}
-			case err, ok := <-watcher.Errors:
-				if !ok {
-					log.Error().Msg("watcher.Errors channel closed")
-					return
-				}
-				log.Error().Err(err).Msg("watcher error")
-				continue
-			}
-
-			log.Info().Msg("reload config")
-			if err := loadConfig(); err != nil {
-				log.Error().Err(err).Msg("Failed to reload config")
-			}
-		}
-	}()
-	if err = watcher.Add("."); err != nil {
-		log.Fatal().Err(err).Msg("Failed to watch config file")
-	}
-
-	return watcher
-}
 
 func main() {
 	if err := writePIDFile(); err != nil {
@@ -156,13 +30,18 @@ func main() {
 	defer wg.Wait()
 
 	// 启动QUIC服务
-	if config.Quic {
+	if config.Quic.Enable {
 		wg.Add(1)
 		go runQuic(&wg)
 	}
 
+	if config.Kcp.Enable {
+		wg.Add(1)
+		go runKcp(&wg)
+	}
+
 	// 监听TCP端口
-	if config.Tcp {
+	if config.Tcp.Enable {
 		wg.Add(1)
 		go runTcp(&wg)
 	}
@@ -173,15 +52,15 @@ func runTcp(wg *sync.WaitGroup) {
 		defer wg.Done()
 	}
 
-	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", config.Port))
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", config.Tcp.Port))
 	if err != nil {
 		log.Fatal().Err(err).
-			Int("port", config.Port).
+			Int("port", config.Tcp.Port).
 			Msg("Failed to listen on port")
 	}
 	defer listener.Close()
 	log.Info().
-		Int("port", config.Port).
+		Int("port", config.Tcp.Port).
 		Msg("Listening for TCP connections")
 
 	for {
@@ -233,10 +112,10 @@ func handleRequest(conn net.Conn) {
 			Msg("Error: buffer is empty")
 		return
 	}
-	mc_host := getMcHost(buf[:n])
+	mc_host := protocol.GetMcHost(buf[:n])
 	host, ok := config.Hosts[mc_host]
 	if !ok {
-		host = config.Default
+		host = config.Hosts["default"]
 	}
 	if host == "" {
 		log.Err(errEmptyBuffer).
@@ -248,6 +127,7 @@ func handleRequest(conn net.Conn) {
 
 	log.Info().
 		Str("client", conn.RemoteAddr().String()).
+		Str("host", mc_host).
 		Str("mc", host).
 		Msg("map to host")
 
@@ -257,6 +137,7 @@ func handleRequest(conn net.Conn) {
 		return
 	}
 	defer client.Close()
+	setSocketOptions(client)
 
 	client.Write(buf[:n])
 	// 不需要 buf 了，释放掉
@@ -295,62 +176,10 @@ func handleWrite(srv, cli net.Conn, wg *sync.WaitGroup) {
 	}
 }
 
-func getMcHost(buf []byte) string {
-	if len(buf) < 5 {
-		return ""
-	}
-
-	buf = buf[4:]
-	host_len := buf[0]
-	if len(buf) < int(host_len)+1 {
-		return ""
-	}
-
-	host := string(buf[1 : host_len+1])
-
-	if spliterIndex := strings.IndexRune(host, 0); spliterIndex != -1 {
-		return host[0:spliterIndex]
-	} else {
-		return host
-	}
-}
-
 func setSocketOptions(conn net.Conn) {
 	if tcpConn, ok := conn.(*net.TCPConn); ok {
 		tcpConn.SetNoDelay(true) // 禁用 Nagle 算法
 		tcpConn.SetKeepAlive(true)
 		tcpConn.SetKeepAlivePeriod(30 * time.Second)
 	}
-}
-
-func handleLogRotate() {
-	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, syscall.SIGHUP)
-
-	for range signalChan {
-		log.Info().Msg("Received SIGHUP, reopening log file")
-		if err := reopenLogFile(); err != nil {
-			log.Error().Err(err).Msg("Failed to reopen log file")
-		}
-	}
-}
-
-func reopenLogFile() error {
-	configLoadLock.Lock()
-	defer configLoadLock.Unlock()
-
-	if config.Log.File == "" {
-		return nil
-	}
-
-	// 重新打开日志文件
-	logFile, err := os.OpenFile(config.Log.File, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		return err
-	}
-
-	log.Logger = log.Logger.Output(io.MultiWriter(os.Stdout, logFile))
-	currentLogFile = config.Log.File
-
-	return nil
 }

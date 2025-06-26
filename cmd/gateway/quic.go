@@ -28,7 +28,7 @@ func runQuic(wg *sync.WaitGroup) {
 		defer wg.Done()
 	}
 
-	udpConn, err := net.ListenUDP("udp4", &net.UDPAddr{Port: config.Port})
+	udpConn, err := net.ListenUDP("udp4", &net.UDPAddr{Port: config.Quic.Port})
 	if err != nil {
 		log.Panic().Err(err).Msg("Failed to listen UDP")
 	}
@@ -43,7 +43,7 @@ func runQuic(wg *sync.WaitGroup) {
 	if err != nil {
 		log.Panic().Err(err).Msg("Failed to listen QUIC")
 	}
-	log.Info().Int("port", config.Port).Msg("Listening for QUIC connections")
+	log.Info().Int("port", config.Quic.Port).Msg("Listening for QUIC connections")
 
 	for {
 		conn, err := ln.Accept(context.Background())
@@ -52,6 +52,9 @@ func runQuic(wg *sync.WaitGroup) {
 			continue
 		}
 
+		log.Info().
+			Str("client", conn.RemoteAddr().String()).
+			Msg("Accepted QUIC connection")
 		go handleQuicRequest(conn)
 	}
 }
@@ -115,8 +118,14 @@ func generateTLSConfig() (*tls.Config, error) {
 		return nil, err
 	}
 
+	nextProtos := config.Quic.ApplicionProtocols
+	if len(nextProtos) == 0 {
+		nextProtos = []string{"minecraft", "quic", "raw", "h3"} // 默认协议
+	}
+
 	// 返回 tls.Config
 	return &tls.Config{
 		Certificates: []tls.Certificate{cert},
+		NextProtos:   nextProtos,
 	}, nil
 }

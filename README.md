@@ -1,2 +1,76 @@
 # mc-gateway
-This project is a Minecraft game server gateway. It allows you to access multiple game servers through different hostnames, using the same port.
+
+一个简易的 Minecraft 网关，通过 host 将客户端的流量转发到对应的后端 Minecraft 服务器。
+
+## 配置
+
+目前 mc-gateway 只支持读取当前目录的 `config.toml` 作为配置。在 `config.toml` 被修改时，可以自动加载并更新部分配置，以达到不停机修改配置的效果。支持热加载的配置有：
+
+- hosts
+- log
+- KCP 的 data_shards 和 parity_Shards
+- QUIC 的 application_protocols
+
+### hosts
+
+hosts 使用期望的 host 做 key，转发的目的地址为 value。参考`config.example.toml`。
+
+### log
+
+| 配置  | 类型   | 备注     |
+| ----- | ------ | -------- |
+| level | Level  | 日志等级 |
+| file  | string | 日志文件 |
+
+> 日志适配 logrotate，可以使用 logrotate 进行日志分片、压缩等日常运维操作，参考配置：
+
+```logrotate
+/var/log/mc-gateway.log {
+    copytruncate
+    daily
+    missingok
+    rotate 14
+    compress
+    compresscmd /usr/bin/zstd
+    compressext .zst
+    compressoptions -T0 --long
+    uncompresscmd /usr/bin/unzstd
+    notifempty
+    delaycompress
+    dateext
+    postrotate
+        # 向程序发送 SIGHUP 信号
+        # mc-gateway 默认会将当前进程的 pid 写入 /var/run/mc-gateway.pid
+        if [ -f /var/run/mc-gateway.pid ]; then
+            kill -SIGHUP $(cat /var/run/mc-gateway.pid)
+        fi
+    endscript
+}
+```
+
+### TCP
+
+| 配置   | 类型 | 备注     |
+| ------ | ---- | -------- |
+| enable | bool | 是否启用 |
+| port   | int  | 端口     |
+
+### KCP
+
+| 配置          | 类型 | 备注     |
+| ------------- | ---- | -------- |
+| enable        | bool | 是否启用 |
+| port          | int  | 端口     |
+| data_shards   | int  | 数据分片 |
+| parity_Shards | int  | 校验分片 |
+
+### QUIC
+
+| 配置                  | 类型     | 备注         |
+| --------------------- | -------- | ------------ |
+| enable                | bool     | 是否启用     |
+| port                  | int      | 端口         |
+| application_protocols | []string | 应用协议列表 |
+
+> application_protocols 只要客户端与服务端有一个能够对应上就可以成功连接
+> 默认值为 ["minecraft", "quic", "raw", "h3"]
