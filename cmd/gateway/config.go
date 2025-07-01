@@ -27,6 +27,7 @@ type (
 		Kcp     KcpConfig         `toml:"kcp"`
 		Hosts   map[string]string `toml:"hosts"`
 		Log     LogConfig         `toml:"log"`
+		PidFile string            `toml:"pid_file"`
 	}
 
 	ProtocolConfig struct {
@@ -42,9 +43,9 @@ type (
 	}
 
 	QuicConfig struct {
-		Enable             bool     `toml:"enable"`
-		Port               int      `toml:"port"`
-		ApplicionProtocols []string `toml:"application_protocols"`
+		Enable               bool     `toml:"enable"`
+		Port                 int      `toml:"port"`
+		ApplicationProtocols []string `toml:"application_protocols"`
 	}
 
 	LogConfig struct {
@@ -71,6 +72,8 @@ func loadConfig() error {
 	if err := toml.Unmarshal(byteValue, &config); err != nil {
 		return err
 	}
+
+	writePIDFile()
 
 	return loadLogger()
 }

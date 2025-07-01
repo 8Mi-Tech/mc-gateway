@@ -18,10 +18,12 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-type quicConn struct {
-	quic.Connection
-	quic.Stream
-}
+type (
+	quicConn struct {
+		quic.Connection
+		quic.Stream
+	}
+)
 
 func runQuic(wg *sync.WaitGroup) {
 	if wg != nil {
@@ -56,6 +58,34 @@ func runQuic(wg *sync.WaitGroup) {
 			Str("client", conn.RemoteAddr().String()).
 			Msg("Accepted QUIC connection")
 		go handleQuicRequest(conn)
+	}
+}
+
+func upstreamQuic(host string) net.Conn {
+	tlsConf := &tls.Config{
+		InsecureSkipVerify: true, // 跳过证书检查
+		NextProtos:         getQuicNextProtos(),
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second) // 3s handshake timeout
+	defer cancel()
+
+	conn, err := quic.DialAddr(ctx, host, tlsConf, nil)
+	if err != nil {
+		log.Err(err).Str("host", host).Msg("Failed to dial QUIC")
+		return nil
+	}
+
+	stream, err := conn.OpenStream()
+	if err != nil {
+		log.Err(err).Str("host", host).Msg("Failed to open stream")
+		return nil
+	}
+	log.Info().Str("host", host).Msg("QUIC stream opened")
+
+	return quicConn{
+		Connection: conn,
+		Stream:     stream,
 	}
 }
 
@@ -118,14 +148,24 @@ func generateTLSConfig() (*tls.Config, error) {
 		return nil, err
 	}
 
-	nextProtos := config.Quic.ApplicionProtocols
-	if len(nextProtos) == 0 {
-		nextProtos = []string{"minecraft", "quic", "raw", "h3"} // 默认协议
-	}
-
 	// 返回 tls.Config
 	return &tls.Config{
 		Certificates: []tls.Certificate{cert},
-		NextProtos:   nextProtos,
+		NextProtos:   getQuicNextProtos(),
 	}, nil
+}
+
+func getQuicNextProtos() []string {
+	nextProtos := config.Quic.ApplicationProtocols
+	if len(nextProtos) == 0 {
+		return []string{"minecraft", "quic", "raw", "h3"} // 默认协议
+	}
+	return nextProtos
+}
+
+func (c quicConn) Close() error {
+	if err := c.Stream.Close(); err != nil {
+		log.Err(err).Msg("Failed to close QUIC stream")
+	}
+	return c.Connection.CloseWithError(0, "Closing QUIC connection")
 }

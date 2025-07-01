@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,14 +13,14 @@ import (
 )
 
 func main() {
-	if err := writePIDFile(); err != nil {
-		panic(fmt.Sprintf("Failed to write PID file: %v", err))
-	}
-	defer removePIDFile()
-
 	if err := loadConfig(); err != nil {
 		panic(err)
 	}
+
+	if err := writePIDFile(); err != nil {
+		log.Err(err).Msg("Failed to write PID file")
+	}
+	defer removePIDFile()
 
 	watcher := watchConfig()
 	defer watcher.Close()
@@ -70,6 +71,7 @@ func runTcp(wg *sync.WaitGroup) {
 			log.Err(err).Msg("Error accepting")
 			continue
 		}
+		setSocketOptions(conn)
 		// 处理连接
 		go handleRequest(conn)
 	}
@@ -96,52 +98,11 @@ func handleRequest(conn net.Conn) {
 	// 确保连接关闭
 	defer conn.Close()
 
-	setSocketOptions(conn)
-
-	buf := make([]byte, 1024)
-	n, err := conn.Read(buf)
-	if err != nil {
-		log.Err(err).
-			Str("client", conn.RemoteAddr().String()).
-			Msg("Error reading hostname")
-		return
-	}
-	if n == 0 {
-		log.Err(errEmptyBuffer).
-			Str("client", conn.RemoteAddr().String()).
-			Msg("Error: buffer is empty")
-		return
-	}
-	mc_host := protocol.GetMcHost(buf[:n])
-	host, ok := config.Hosts[mc_host]
-	if !ok {
-		host = config.Hosts["default"]
-	}
-	if host == "" {
-		log.Err(errEmptyBuffer).
-			Str("client", conn.RemoteAddr().String()).
-			Str("host", mc_host).
-			Msg("failed to route host")
-		return
-	}
-
-	log.Info().
-		Str("client", conn.RemoteAddr().String()).
-		Str("host", mc_host).
-		Str("mc", host).
-		Msg("map to host")
-
-	client, err := net.Dial("tcp", host)
-	if err != nil {
-		log.Err(err).Msg("Error dialing")
+	client := mapToHost(conn)
+	if client == nil {
 		return
 	}
 	defer client.Close()
-	setSocketOptions(client)
-
-	client.Write(buf[:n])
-	// 不需要 buf 了，释放掉
-	buf = nil
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -152,6 +113,77 @@ func handleRequest(conn net.Conn) {
 	// 等待所有读写操作完成
 	// 不放在 defer 中，以防报错时无法关闭连接
 	wg.Wait()
+}
+
+func mapToHost(conn net.Conn) net.Conn {
+	buf := make([]byte, 1024)
+	n, err := conn.Read(buf)
+	if err != nil {
+		log.Err(err).
+			Str("client", conn.RemoteAddr().String()).
+			Msg("failed to reading hostname")
+		return nil
+	}
+	if n == 0 {
+		log.Err(errEmptyBuffer).
+			Str("client", conn.RemoteAddr().String()).
+			Msg("buffer is empty")
+		return nil
+	}
+
+	mc_host := protocol.GetMcHost(buf[:n])
+	if mc_host == "" {
+		log.Err(errEmptyBuffer).
+			Str("client", conn.RemoteAddr().String()).
+			Msg("failed to parse mc host from buffer")
+		return nil
+	}
+
+	host, ok := config.Hosts[mc_host]
+	if !ok {
+		host = config.Hosts["default"]
+	}
+	if host == "" {
+		log.Err(errEmptyBuffer).
+			Str("client", conn.RemoteAddr().String()).
+			Str("host", mc_host).
+			Msg("failed to route host")
+		return nil
+	}
+
+	log.Info().
+		Str("client", conn.RemoteAddr().String()).
+		Str("host", mc_host).
+		Str("mc", host).
+		Msg("map to host")
+
+	var client net.Conn
+
+	if host, ok := strings.CutPrefix(host, "quic://"); ok {
+		client = upstreamQuic(host)
+	} else if host, ok := strings.CutPrefix(host, "kcp://"); ok {
+		client = upstreamKcp(host)
+	} else {
+		client = upstreamTcp(host)
+	}
+	if client == nil {
+		return nil
+	}
+
+	client.Write(buf[:n])
+
+	return client
+}
+
+func upstreamTcp(host string) net.Conn {
+	conn, err := net.Dial("tcp", host)
+	if err != nil {
+		log.Err(err).Str("host", host).Msg("Error dialing upstream")
+		return nil
+	}
+	setSocketOptions(conn)
+	return conn
+
 }
 
 func handleRead(srv, cli net.Conn, wg *sync.WaitGroup) {

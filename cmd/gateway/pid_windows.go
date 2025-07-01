@@ -3,9 +3,6 @@
 
 package main
 
-func writePIDFile() error {
-	return nil
-}
-
-func removePIDFile() {
+func getPidFileFromConfig() string {
+	return config.PidFile
 }

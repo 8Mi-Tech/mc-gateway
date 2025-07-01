@@ -10,10 +10,20 @@
 - log
 - KCP 的 data_shards 和 parity_Shards
 - QUIC 的 application_protocols
+- pid_file
+
+### 顶层配置
+
+| 配置     | 类型   | 备注     |
+| -------- | ------ | -------- |
+| pid_file | string | pid 文件 |
+
+> pid_file 在非 windows 平台默认会写入 /var/run/mc-gateway.pid，
+> 在 windows 平台默认不会写入任何文件
 
 ### hosts
 
-hosts 使用期望的 host 做 key，转发的目的地址为 value。参考`config.example.toml`。
+hosts 使用期望的 host 做 key，转发的目的地址为 value。参考`config.example.toml`。默认的 fallback host 配置 key 为 `default`。
 
 ### log
 

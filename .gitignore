@@ -1,6 +1,7 @@
 .vscode
 
-config.json
 config.toml
-/gateway
+/gateway*
+/kcp*
+/quic*
 /logs/

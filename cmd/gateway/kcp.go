@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"sync"
 
 	"github.com/rs/zerolog/log"
@@ -38,4 +39,16 @@ func runKcp(wg *sync.WaitGroup) {
 
 		go handleRequest(conn)
 	}
+}
+
+func upstreamKcp(host string) net.Conn {
+	conn, err := kcp.DialWithOptions(host, nil, config.Kcp.DataShards, config.Kcp.ParityShards)
+	if err != nil {
+		log.Error().Err(err).
+			Msg("Failed to dial KCP server")
+	}
+	defer conn.Close()
+
+	conn.SetACKNoDelay(true)
+	return conn
 }
