@@ -3,15 +3,17 @@ package main
 import (
 	"io"
 	"os"
-	"os/signal"
 	"path/filepath"
-	"syscall"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
 
 func loadLogger() error {
+	if len(config.Log.Level) == 0 {
+		config.Log.Level = "info"
+	}
+
 	level, err := zerolog.ParseLevel(config.Log.Level)
 	if err != nil {
 		return err
@@ -35,18 +37,6 @@ func loadLogger() error {
 	}
 
 	return nil
-}
-
-func handleLogRotate() {
-	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, syscall.SIGHUP)
-
-	for range signalChan {
-		log.Info().Msg("Received SIGHUP, reopening log file")
-		if err := reopenLogFile(); err != nil {
-			log.Error().Err(err).Msg("Failed to reopen log file")
-		}
-	}
 }
 
 func reopenLogFile() error {

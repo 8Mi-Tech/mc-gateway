@@ -9,20 +9,20 @@ var currentPidFile string
 
 func writePIDFile() error {
 	newPidFile := getPidFileFromConfig()
-	if newPidFile == currentPidFile {
+	if newPidFile == "" || newPidFile == currentPidFile {
 		return nil
 	}
 
 	if currentPidFile != "" {
 		removePIDFile()
 	}
+	currentPidFile = newPidFile
 
 	pid := os.Getpid()
 	if err := os.WriteFile(newPidFile, []byte(fmt.Sprintf("%d\n", pid)), 0644); err != nil {
 		return err
 	}
 
-	currentPidFile = newPidFile
 	return nil
 }
 

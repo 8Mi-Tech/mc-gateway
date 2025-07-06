@@ -22,12 +22,13 @@ var (
 
 type (
 	Config struct {
-		Tcp     ProtocolConfig    `toml:"tcp"`
-		Quic    QuicConfig        `toml:"quic"`
-		Kcp     KcpConfig         `toml:"kcp"`
-		Hosts   map[string]string `toml:"hosts"`
-		Log     LogConfig         `toml:"log"`
-		PidFile string            `toml:"pid_file"`
+		Tcp       ProtocolConfig    `toml:"tcp"`
+		Quic      QuicConfig        `toml:"quic"`
+		Kcp       KcpConfig         `toml:"kcp"`
+		WebSocket WebSocketConfig   `toml:"websocket"`
+		Hosts     map[string]string `toml:"hosts"`
+		Log       LogConfig         `toml:"log"`
+		PidFile   string            `toml:"pid_file"`
 	}
 
 	ProtocolConfig struct {
@@ -48,11 +49,50 @@ type (
 		ApplicationProtocols []string `toml:"application_protocols"`
 	}
 
+	WebSocketConfig struct {
+		Enable bool   `toml:"enable"`
+		Port   int    `toml:"port"`
+		Path   string `toml:"path"`
+	}
+
+	// LogConfig 定义了日志的配置，包括日志级别和日志文件路径
+	// 日志级别可以是 "trade", "debug", "info", "warn", "error", "fatal", "disabled"
+	// 默认日志级别为 "info"
+	// 日志文件路径指定了日志输出的位置
+	// 如果日志文件路径为空，则日志将只输出到标准输出
 	LogConfig struct {
 		Level string `toml:"level"`
 		File  string `toml:"file"`
 	}
+
+	// serviceConfig 定义了一个服务的配置，包括是否启用和运行函数
+	// 运行函数接收一个 WaitGroup，用于在服务运行时进行同步
+	// 这样可以确保所有服务在主函数退出前都能正确关闭
+	// 运行函数通常会在 goroutine 中执行，以便并发处理多个服务
+	serviceConfig struct {
+		enable *bool
+		run    func(wg *sync.WaitGroup)
+	}
 )
+
+var services = []serviceConfig{
+	{
+		enable: &config.Tcp.Enable,
+		run:    runTcp,
+	},
+	{
+		enable: &config.Kcp.Enable,
+		run:    runKcp,
+	},
+	{
+		enable: &config.Quic.Enable,
+		run:    runQuic,
+	},
+	{
+		enable: &config.WebSocket.Enable,
+		run:    runWebSocket,
+	},
+}
 
 func loadConfig() error {
 	configLoadLock.Lock()

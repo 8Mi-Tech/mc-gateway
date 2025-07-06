@@ -1,13 +1,12 @@
 package main
 
 import (
-	"fmt"
 	"io"
 	"net"
 	"strings"
 	"sync"
-	"time"
 
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/tursom/mc-gateway/protocol"
 )
@@ -30,50 +29,13 @@ func main() {
 	var wg sync.WaitGroup
 	defer wg.Wait()
 
-	// 启动QUIC服务
-	if config.Quic.Enable {
-		wg.Add(1)
-		go runQuic(&wg)
-	}
-
-	if config.Kcp.Enable {
-		wg.Add(1)
-		go runKcp(&wg)
-	}
-
-	// 监听TCP端口
-	if config.Tcp.Enable {
-		wg.Add(1)
-		go runTcp(&wg)
-	}
-}
-
-func runTcp(wg *sync.WaitGroup) {
-	if wg != nil {
-		defer wg.Done()
-	}
-
-	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", config.Tcp.Port))
-	if err != nil {
-		log.Fatal().Err(err).
-			Int("port", config.Tcp.Port).
-			Msg("Failed to listen on port")
-	}
-	defer listener.Close()
-	log.Info().
-		Int("port", config.Tcp.Port).
-		Msg("Listening for TCP connections")
-
-	for {
-		// 接受传入的连接
-		conn, err := listener.Accept()
-		if err != nil {
-			log.Err(err).Msg("Error accepting")
+	for _, service := range services {
+		if !*service.enable {
 			continue
 		}
-		setSocketOptions(conn)
-		// 处理连接
-		go handleRequest(conn)
+
+		wg.Add(1)
+		go service.run(&wg)
 	}
 }
 
@@ -105,10 +67,10 @@ func handleRequest(conn net.Conn) {
 	defer client.Close()
 
 	var wg sync.WaitGroup
-	wg.Add(1)
 
-	go handleRead(client, conn, &wg)
-	handleWrite(client, conn, nil)
+	wg.Add(1)
+	go copyData(client, conn, &wg)
+	copyData(conn, client, nil)
 
 	// 等待所有读写操作完成
 	// 不放在 defer 中，以防报错时无法关闭连接
@@ -175,43 +137,27 @@ func mapToHost(conn net.Conn) net.Conn {
 	return client
 }
 
-func upstreamTcp(host string) net.Conn {
-	conn, err := net.Dial("tcp", host)
-	if err != nil {
-		log.Err(err).Str("host", host).Msg("Error dialing upstream")
-		return nil
-	}
-	setSocketOptions(conn)
-	return conn
+func copyData(dst io.Writer, src io.Reader, wg *sync.WaitGroup) {
+	defer func() {
+		if r := recover(); r != nil {
+			var event *zerolog.Event
+			if err, ok := r.(error); ok {
+				event = log.Err(err)
+			} else if str, ok := r.(string); ok {
+				event = log.Error().Str("panic", str)
+			} else {
+				event = log.Error().Any("panic", r)
+			}
+			event.Msg("Panic in copyData")
+		}
+	}()
 
-}
-
-func handleRead(srv, cli net.Conn, wg *sync.WaitGroup) {
 	if wg != nil {
 		defer wg.Done()
 	}
 
-	_, err := io.Copy(srv, cli)
+	_, err := io.Copy(dst, src)
 	if err != nil && err != io.EOF {
 		log.Err(err).Msg("Error copying data")
-	}
-}
-
-func handleWrite(srv, cli net.Conn, wg *sync.WaitGroup) {
-	if wg != nil {
-		defer wg.Done()
-	}
-
-	_, err := io.Copy(cli, srv)
-	if err != nil && err != io.EOF {
-		log.Err(err).Msg("Error copying data")
-	}
-}
-
-func setSocketOptions(conn net.Conn) {
-	if tcpConn, ok := conn.(*net.TCPConn); ok {
-		tcpConn.SetNoDelay(true) // 禁用 Nagle 算法
-		tcpConn.SetKeepAlive(true)
-		tcpConn.SetKeepAlivePeriod(30 * time.Second)
 	}
 }

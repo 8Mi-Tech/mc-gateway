@@ -5,6 +5,7 @@ go 1.23.1
 require (
 	github.com/BurntSushi/toml v1.5.0
 	github.com/fsnotify/fsnotify v1.7.0
+	github.com/gorilla/websocket v1.5.3
 	github.com/quic-go/quic-go v0.52.0
 	github.com/rs/zerolog v1.33.0
 	github.com/xtaci/kcp-go v5.4.20+incompatible

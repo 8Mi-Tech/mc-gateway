@@ -58,14 +58,16 @@ hosts 使用期望的 host 做 key，转发的目的地址为 value。参考`con
 }
 ```
 
-### TCP
+### tcp
 
 | 配置   | 类型 | 备注     |
 | ------ | ---- | -------- |
 | enable | bool | 是否启用 |
 | port   | int  | 端口     |
 
-### KCP
+> 默认端口为 25565，与 Minecraft 服务端保持一致
+
+### kcp
 
 | 配置          | 类型 | 备注     |
 | ------------- | ---- | -------- |
@@ -74,7 +76,7 @@ hosts 使用期望的 host 做 key，转发的目的地址为 value。参考`con
 | data_shards   | int  | 数据分片 |
 | parity_Shards | int  | 校验分片 |
 
-### QUIC
+### quic
 
 | 配置                  | 类型     | 备注         |
 | --------------------- | -------- | ------------ |
@@ -84,3 +86,15 @@ hosts 使用期望的 host 做 key，转发的目的地址为 value。参考`con
 
 > application_protocols 只要客户端与服务端有一个能够对应上就可以成功连接
 > 默认值为 ["minecraft", "quic", "raw", "h3"]
+
+### websocket
+
+| 配置   | 类型 | 备注     |
+| ------ | ---- | -------- |
+| enable | bool | 是否启用 |
+| port   | int  | 端口     |
+| path   | str  | 接口路径 |
+
+> path 默认为 "/"，会对所有路径的请求进行处理
+>
+> port 默认为 25566
