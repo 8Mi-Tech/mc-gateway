@@ -9,6 +9,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/fsnotify/fsnotify"
+	"github.com/mitchellh/mapstructure"
 	"github.com/rs/zerolog/log"
 )
 
@@ -22,13 +23,14 @@ var (
 
 type (
 	Config struct {
-		Tcp       ProtocolConfig    `toml:"tcp"`
-		Quic      QuicConfig        `toml:"quic"`
-		Kcp       KcpConfig         `toml:"kcp"`
-		WebSocket WebSocketConfig   `toml:"websocket"`
-		Hosts     map[string]string `toml:"hosts"`
-		Log       LogConfig         `toml:"log"`
-		PidFile   string            `toml:"pid_file"`
+		Tcp       ProtocolConfig            `toml:"tcp"`
+		Quic      QuicConfig                `toml:"quic"`
+		Kcp       KcpConfig                 `toml:"kcp"`
+		WebSocket WebSocketConfig           `toml:"websocket"`
+		Hosts     map[string]string         `toml:"hosts"`
+		Log       LogConfig                 `toml:"log"`
+		PidFile   string                    `toml:"pid_file"`
+		Plugin    map[string]map[string]any `toml:"plugin"`
 	}
 
 	ProtocolConfig struct {
@@ -115,7 +117,13 @@ func loadConfig() error {
 
 	writePIDFile()
 
-	return loadLogger()
+	if err := loadLogger(); err != nil {
+		return err
+	}
+
+	loadPlugins()
+
+	return nil
 }
 
 func watchConfig() *fsnotify.Watcher {
@@ -163,4 +171,24 @@ func watchConfig() *fsnotify.Watcher {
 	}
 
 	return watcher
+}
+
+func loadPluginConfig(cfg map[string]any, pluginCfg any) error {
+	log.Info().
+		Any("config", cfg).
+		Msg("Loading plugin config")
+
+	decoder, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
+		Result:  pluginCfg,
+		TagName: "toml",
+	})
+	if err != nil {
+		return err
+	}
+
+	if err := decoder.Decode(cfg); err != nil {
+		return err
+	}
+
+	return nil
 }

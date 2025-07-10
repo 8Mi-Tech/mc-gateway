@@ -1,0 +1,175 @@
+package main
+
+import (
+	"net"
+	"plugin"
+	"sync"
+
+	"github.com/rs/zerolog/log"
+	"github.com/tursom/mc-gateway/plugin/api"
+)
+
+var (
+	exitWaitGroup sync.WaitGroup
+
+	pluginLock sync.RWMutex
+	plugins    = make(map[string]api.Plugin)
+
+	hooks = make(map[string]map[string]any)
+)
+
+type (
+	Gateway struct {
+		pluginId string
+	}
+)
+
+func loadPlugins() {
+	pluginLock.Lock()
+	defer pluginLock.Unlock()
+
+	for pluginKey, pluginConfig := range config.Plugin {
+		if enable, ok := pluginConfig["enable"].(bool); ok && enable {
+			pluginFile := pluginKey
+			if file, ok := pluginConfig["file"].(string); ok {
+				pluginFile = file
+			}
+
+			if _, ok := plugins[pluginKey]; ok {
+				continue
+			}
+
+			gateway := &Gateway{
+				pluginId: pluginKey,
+			}
+
+			log.Info().Str("plugin", pluginKey).Msg("Loading plugin")
+			p, err := plugin.Open(pluginFile + ".so")
+			if err != nil {
+				log.Err(err).Str("plugin", pluginKey).Msg("Failed to open plugin")
+				continue
+			}
+
+			pluginSymbol, err := p.Lookup("Plugin")
+			if err != nil {
+				log.Err(err).Str("plugin", pluginKey).Msg("Failed to lookup plugin")
+				continue
+			}
+			pluginFactory, ok := pluginSymbol.(func() api.Plugin)
+			if !ok {
+				log.Err(err).Str("plugin", pluginKey).Msg("Invalid plugin factory signature")
+				continue
+			}
+			pluginInstance := pluginFactory()
+			cfgObj := pluginInstance.NewConfigObj()
+			if err := loadPluginConfig(pluginConfig, cfgObj); err != nil {
+				log.Err(err).Str("plugin", pluginKey).Msg("Failed to load plugin config")
+				continue
+			}
+
+			if err := pluginInstance.ReloadConfig(cfgObj); err != nil {
+				log.Err(err).Str("plugin", pluginKey).Msg("Failed to reload plugin config")
+				continue
+			}
+
+			if err := pluginInstance.Init(gateway); err != nil {
+				log.Err(err).Str("plugin", pluginKey).Msg("Failed to initialize plugin")
+				continue
+			}
+
+			plugins[pluginKey] = pluginInstance
+			hooks[pluginKey] = make(map[string]any)
+			log.Info().Str("plugin", pluginKey).Msg("Plugin loaded successfully")
+		} else {
+			if plugin, ok := plugins[pluginKey]; ok {
+				if err := plugin.Destroy(); err != nil {
+					log.Err(err).Str("plugin", pluginKey).Msg("Failed to destroy plugin")
+				}
+				log.Info().Str("plugin", pluginKey).Msg("Plugin disabled")
+			}
+			delete(plugins, pluginKey)
+			delete(hooks, pluginKey)
+		}
+	}
+}
+
+// HandleConn implements api.Gateway.
+func (g *Gateway) HandleConn(conn net.Conn) {
+	go handleRequest(conn)
+}
+
+// Hook implements api.Gateway.
+func (g *Gateway) Hook(hook string, handler any) error {
+	pluginLock.Lock()
+	defer pluginLock.Unlock()
+
+	hooks[g.pluginId][hook] = handler
+	return nil
+}
+
+// ExitWaitGroup implements api.Gateway.
+func (g *Gateway) ExitWaitGroup() *sync.WaitGroup {
+	return &exitWaitGroup
+}
+
+// TestOp implements api.Gateway.
+func (g *Gateway) TestOp() {
+	panic("unimplemented")
+}
+
+func Handler1[T1, R any](t1 T1) func(func(T1) R) R {
+	return func(acceptor func(T1) R) R {
+		return acceptor(t1)
+	}
+}
+
+func Handler2[T1, T2, R any](t1 T1, t2 T2) func(func(T1, T2) R) R {
+	return func(acceptor func(T1, T2) R) R {
+		return acceptor(t1, t2)
+	}
+}
+
+func Handler1R2[T1, R1, R2 any](t1 T1) func(func(T1) (R1, R2)) (R1, R2) {
+	return func(acceptor func(T1) (R1, R2)) (R1, R2) {
+		return acceptor(t1)
+	}
+}
+
+func invokeFirstHookHandler[Acceptor, Handler any](
+	hook api.HookType[Acceptor, Handler],
+	acceptor func(Acceptor) bool,
+	handelr func(Handler) error,
+) (bool, error) {
+	pluginLock.RLock()
+	defer pluginLock.RUnlock()
+
+	for _, handlers := range hooks {
+		if handler, ok := handlers[hook.Key()].(api.HookHandler[Acceptor, Handler]); ok && acceptor(handler.Acceptor()) {
+			if err := handelr(handler.Handler()); err != nil {
+				return true, err
+			}
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func invokeAllHookHandler[Acceptor, Handler any](
+	hook api.HookType[Acceptor, Handler],
+	acceptor func(Acceptor) bool,
+	handelr func(Handler) error,
+) error {
+	pluginLock.RLock()
+	defer pluginLock.RUnlock()
+
+	for _, handlers := range hooks {
+		if handler, ok := handlers[hook.Key()].(api.HookHandler[Acceptor, Handler]); ok && acceptor(handler.Acceptor()) {
+			if err := handelr(handler.Handler()); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}

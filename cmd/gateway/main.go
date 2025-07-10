@@ -8,6 +8,7 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"github.com/tursom/mc-gateway/plugin/api"
 	"github.com/tursom/mc-gateway/protocol"
 )
 
@@ -26,16 +27,15 @@ func main() {
 
 	go handleLogRotate()
 
-	var wg sync.WaitGroup
-	defer wg.Wait()
+	defer exitWaitGroup.Wait()
 
 	for _, service := range services {
 		if !*service.enable {
 			continue
 		}
 
-		wg.Add(1)
-		go service.run(&wg)
+		exitWaitGroup.Add(1)
+		go service.run(&exitWaitGroup)
 	}
 }
 
@@ -121,12 +121,26 @@ func mapToHost(conn net.Conn) net.Conn {
 
 	var client net.Conn
 
-	if host, ok := strings.CutPrefix(host, "quic://"); ok {
-		client = upstreamQuic(host)
-	} else if host, ok := strings.CutPrefix(host, "kcp://"); ok {
-		client = upstreamKcp(host)
-	} else {
-		client = upstreamTcp(host)
+	ok, err = invokeFirstHookHandler(api.HookUpstream, Handler2[net.Conn, string, bool](conn, host), func(handler func(net.Conn, string) (net.Conn, error)) error {
+		var err error
+		client, err = handler(conn, host)
+		return err
+	})
+	if err != nil {
+		log.Err(err).Msg("Failed to invoke upstream hook")
+		return nil
+	}
+
+	if !ok {
+		if host, ok := strings.CutPrefix(host, "quic://"); ok {
+			client = upstreamQuic(host)
+		} else if host, ok := strings.CutPrefix(host, "kcp://"); ok {
+			client = upstreamKcp(host)
+		} else if host, ok := strings.CutPrefix(host, "haproxy://"); ok {
+			client = haProxyUpstream(conn, host)
+		} else {
+			client = upstreamTcp(host)
+		}
 	}
 	if client == nil {
 		return nil
