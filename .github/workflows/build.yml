@@ -167,7 +167,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v6
       with:
-        go-version: '1.23.1'
+        go-version: '1.24.1'
 
     - name: Build Gateway
       run: go build -ldflags="-s -w" -o gateway-${{ matrix.name }}${{ matrix.ext }} ./cmd/gateway
