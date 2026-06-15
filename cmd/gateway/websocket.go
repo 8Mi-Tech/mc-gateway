@@ -87,7 +87,7 @@ func runWebSocket(wg *sync.WaitGroup) {
 
 	port := config.WebSocket.Port
 	if port == 0 {
-		port = 25566 // 默认端口
+		port = 8080 // 默认端口
 	}
 
 	log.Info().Int("port", port).Str("path", path).Msg("Starting WebSocket server")
