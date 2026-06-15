@@ -238,10 +238,11 @@ jobs:
         <br>
         EOF
 
-    - name: Upload Prerelease
+    - name: Upload Nightly
       uses: softprops/action-gh-release@v3
       if: ${{  success() }}
       with:
+        name: "主分支 Nightly"
         tag_name: Nightly-${{ github.ref_name }}
         files: |
           artifacts/*
