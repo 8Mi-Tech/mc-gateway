@@ -1,7 +1,7 @@
 # This workflow will build a golang project
 # For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
 
-name: Go
+name: Golang Build
 
 on:
   workflow_dispatch: {}
@@ -162,10 +162,10 @@ jobs:
             #name: wasip1-wasm
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
     - name: Set up Go
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v6
       with:
         go-version: '1.23.1'
 
@@ -191,31 +191,59 @@ jobs:
         GOARM: ${{ matrix.goarm }}
 
     - name: Upload artifacts artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: binaries-${{ matrix.name }}
+        retention-days: 1
         path: |
           gateway-${{ matrix.name }}${{ matrix.ext }}
           kcp-${{ matrix.name }}${{ matrix.ext }}
           quic-${{ matrix.name }}${{ matrix.ext }}
 
-  # 合并所有构建产物
-  merge-artifacts:
-    needs: build
+  Upload-Prerelease:
+    permissions: write-all
+    if: ${{ github.event_name != 'workflow_dispatch' && github.ref_type == 'branch' && !startsWith(github.event_name, 'pull_request') }}
+    needs: [build]
     runs-on: ubuntu-latest
     steps:
-    - name: Download all artifacts
-      uses: actions/download-artifact@v4
+    - name: Download all workflow run artifacts
+      uses: actions/download-artifact@v8
       with:
-        path: ./artifacts
-        merge-multiple: true  # 合并所有 artifacts
+        path: artifacts/
+        merge-multiple: true
 
     - name: Display structure
       run: ls -la ./artifacts
 
-    - name: Upload merged artifacts
-      uses: actions/upload-artifact@v4
+    - name: Delete current release assets
+      uses: 8Mi-Tech/delete-release-assets-action@main
       with:
-        name: mc-gateway-all-platforms
-        path: ./artifacts/*
-        retention-days: 30
+        tag: Nightly-${{ github.ref_name }}
+        deleteOnlyFromDrafts: false
+   
+    - name: Set Env
+      run: |
+        echo "BUILDTIME=$(TZ=Asia/Shanghai date)" >> $GITHUB_ENV
+      shell: bash
+
+    - name: Tag Repo
+      uses: richardsimko/update-tag@v1
+      with:
+        tag_name: Nightly-${{ github.ref_name }}
+      
+    - run: |
+        cat > release.txt << 'EOF'
+        更新于 ${{ env.BUILDTIME }}, 与分支 ${{ github.ref_name }} 保持同步最新
+        <br>
+        EOF
+
+    - name: Upload Prerelease
+      uses: softprops/action-gh-release@v3
+      if: ${{  success() }}
+      with:
+        tag_name: Nightly-${{ github.ref_name }}
+        files: |
+          artifacts/*
+        prerelease: true
+        generate_release_notes: true
+        body_path: release.txt
