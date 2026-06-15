@@ -48,7 +48,7 @@ type (
 	QuicConfig struct {
 		Enable bool     `yaml:"enable"`
 		Port   int      `yaml:"port"`
-		ALPN   []string `yaml:"ALPN"`
+		ALPN   []string `yaml:"alpn"`
 	}
 
 	WebSocketConfig struct {
