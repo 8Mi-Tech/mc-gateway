@@ -7,14 +7,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/BurntSushi/toml"
 	"github.com/fsnotify/fsnotify"
 	"github.com/mitchellh/mapstructure"
 	"github.com/rs/zerolog/log"
+	"gopkg.in/yaml.v3"
 )
 
 var (
-	configFile = "config.toml"
+	configFile = "config.yaml" // 配置文件改为 YAML 格式
 
 	config         Config
 	currentLogFile string
@@ -23,48 +23,48 @@ var (
 
 type (
 	Config struct {
-		Tcp       ProtocolConfig            `toml:"tcp"`
-		Quic      QuicConfig                `toml:"quic"`
-		Kcp       KcpConfig                 `toml:"kcp"`
-		WebSocket WebSocketConfig           `toml:"websocket"`
-		Hosts     map[string]string         `toml:"hosts"`
-		Log       LogConfig                 `toml:"log"`
-		PidFile   string                    `toml:"pid_file"`
-		Plugin    map[string]map[string]any `toml:"plugin"`
+		Tcp       TcpConfig                 `yaml:"tcp"`
+		Quic      QuicConfig                `yaml:"quic"`
+		Kcp       KcpConfig                 `yaml:"kcp"`
+		WebSocket WebSocketConfig           `yaml:"websocket"`
+		Hosts     map[string]string         `yaml:"hosts"`
+		Log       LogConfig                 `yaml:"log"`
+		PidFile   string                    `yaml:"pid_file"`
+		Plugin    map[string]map[string]any `yaml:"plugin"`
 	}
 
-	ProtocolConfig struct {
-		Enable bool `toml:"enable"`
-		Port   int  `toml:"port"`
+	TcpConfig struct {
+		Enable bool `yaml:"enable"`
+		Port   int  `yaml:"port"`
 	}
 
 	KcpConfig struct {
-		Enable       bool `toml:"enable"`
-		Port         int  `toml:"port"`
-		DataShards   int  `toml:"data_shards"`
-		ParityShards int  `toml:"parity_Shards"`
+		Enable       bool `yaml:"enable"`
+		Port         int  `yaml:"port"`
+		DataShards   int  `yaml:"data_shards"`
+		ParityShards int  `yaml:"parity_shards"` // 保持原 TOML 键名，YAML 中键名同样为 parity_Shards
 	}
 
 	QuicConfig struct {
-		Enable               bool     `toml:"enable"`
-		Port                 int      `toml:"port"`
-		ApplicationProtocols []string `toml:"application_protocols"`
+		Enable bool     `yaml:"enable"`
+		Port   int      `yaml:"port"`
+		ALPN   []string `yaml:"ALPN"`
 	}
 
 	WebSocketConfig struct {
-		Enable bool   `toml:"enable"`
-		Port   int    `toml:"port"`
-		Path   string `toml:"path"`
+		Enable bool   `yaml:"enable"`
+		Port   int    `yaml:"port"`
+		Path   string `yaml:"path"`
 	}
 
 	// LogConfig 定义了日志的配置，包括日志级别和日志文件路径
-	// 日志级别可以是 "trade", "debug", "info", "warn", "error", "fatal", "disabled"
+	// 日志级别可以是 "trace", "debug", "info", "warn", "error", "fatal", "disabled"
 	// 默认日志级别为 "info"
 	// 日志文件路径指定了日志输出的位置
 	// 如果日志文件路径为空，则日志将只输出到标准输出
 	LogConfig struct {
-		Level string `toml:"level"`
-		File  string `toml:"file"`
+		Level string `yaml:"level"`
+		File  string `yaml:"file"`
 	}
 
 	// serviceConfig 定义了一个服务的配置，包括是否启用和运行函数
@@ -111,7 +111,8 @@ func loadConfig() error {
 		return err
 	}
 
-	if err := toml.Unmarshal(byteValue, &config); err != nil {
+	// 使用 yaml.Unmarshal 替代 toml.Unmarshal
+	if err := yaml.Unmarshal(byteValue, &config); err != nil {
 		return err
 	}
 
@@ -148,6 +149,7 @@ func watchConfig() *fsnotify.Watcher {
 					log.Error().Msg("watcher.Events channel closed")
 					return
 				}
+				// 检查事件文件名是否匹配 config.yaml
 				if !strings.HasSuffix(event.Name, configFile) {
 					continue
 				}
@@ -178,9 +180,10 @@ func loadPluginConfig(cfg map[string]any, pluginCfg any) error {
 		Any("config", cfg).
 		Msg("Loading plugin config")
 
+	// 将 TagName 改为 "yaml" 以匹配结构体标签
 	decoder, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
 		Result:  pluginCfg,
-		TagName: "toml",
+		TagName: "yaml",
 	})
 	if err != nil {
 		return err

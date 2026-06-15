@@ -1,0 +1,36 @@
+# 字符开头是 #? 的 是代表还没开发的功能
+#程序
+pid_file: gateway.pid
+log:
+  file: logs/mc1.log
+  level: warn
+#plugin:
+  #myplugin:
+    #key: value
+#主机名绑定端口
+hosts:
+  127.0.0.1: haproxy://127.0.0.2:25565
+  mc.dev: 127.0.0.2:25565
+#端口 默认关闭 需要什么类型的服务则自行打开
+tcp:
+  enable: false
+  port: 25565
+websocket:
+  enable: false
+  port: 8080
+  path: /
+  #? trust_ip_header: X-Real-IP 
+quic:
+  enable: false
+  port: 8080
+  #? trust_ip_header: X-Real-IP
+  alpn:
+  - minecraft
+  - quic
+  - raw
+  - h3
+kcp:
+  enable: false
+  port: 25566
+  data_shards: 10
+  parity_shards: 3

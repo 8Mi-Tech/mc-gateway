@@ -78,11 +78,11 @@ hosts 使用期望的 host 做 key，转发的目的地址为 value。参考`con
 
 ### quic
 
-| 配置                  | 类型     | 备注         |
-| --------------------- | -------- | ------------ |
-| enable                | bool     | 是否启用     |
-| port                  | int      | 端口         |
-| application_protocols | []string | 应用协议列表 |
+| 配置   | 类型     | 备注         |
+| ------ | -------- | ------------ |
+| enable | bool     | 是否启用     |
+| port   | int      | 端口         |
+| alpn   | []string | 应用协议列表 |
 
 > application_protocols 只要客户端与服务端有一个能够对应上就可以成功连接
 > 默认值为 ["minecraft", "quic", "raw", "h3"]

@@ -156,7 +156,7 @@ func generateTLSConfig() (*tls.Config, error) {
 }
 
 func getQuicNextProtos() []string {
-	nextProtos := config.Quic.ApplicationProtocols
+	nextProtos := config.Quic.ALPN
 	if len(nextProtos) == 0 {
 		return []string{"minecraft", "quic", "raw", "h3"} // 默认协议
 	}
